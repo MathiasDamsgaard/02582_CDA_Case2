@@ -1,13 +1,13 @@
 # 02582 Case II – EmoPairCompete
 
-## Aim
 We investigate whether physiological features can reveal latent emotional/stress-related states across the experiment phases.
 
 ## Data
 This project uses the Case II dataset provided through the course.
 The dataset is license-restricted and is not stored in this repository.
 
-## Repository structure
+## Documentation precedence
+- `README.md/` — project overview and practical usage
 - `src/` reusable code
 - `notebooks/` exploratory analysis
 - `reports/` report and figures
