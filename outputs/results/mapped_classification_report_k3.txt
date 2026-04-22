@@ -1,0 +1,9 @@
+              precision    recall  f1-score   support
+
+      phase1       0.47      0.36      0.40       104
+      phase2       0.41      0.45      0.43       104
+      phase3       0.33      0.38      0.35       104
+
+    accuracy                           0.39       312
+   macro avg       0.40      0.39      0.39       312
+weighted avg       0.40      0.39      0.39       312
