@@ -1,15 +1,217 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
-from .clustering import fit_final_gmm
+import pandas as pd
+    
+from .clustering import fit_final_gmm, fit_final_kmeans
 from .config import PipelineConfig
 from .data_io import ensure_output_directories, load_dataset
-from .evaluation import evaluate_phase_alignment
-from .model_selection import evaluate_gmm_candidates
-from .pca_stage import run_pca
-from .preprocessing import preprocess_dataset
-from .visualization import plot_aic_bic, plot_cluster_phase_heatmap, plot_cumulative_variance
+from .evaluation import EvaluationResult, evaluate_phase_alignment
+from .model_selection import ModelSelectionResult, evaluate_gmm_candidates, evaluate_kmeans_candidates
+from .pca_stage import PCAResult, run_pca
+from .preprocessing import PreprocessingResult, preprocess_dataset
+from .visualization import (
+    plot_aic_bic,
+    plot_cluster_phase_heatmap,
+    plot_cumulative_variance,
+    plot_kmeans_elbow,
+    plot_kmeans_silhouette,
+)
+
+
+def _make_branch_dirs(results_root: Path, figures_root: Path, branch_name: str) -> tuple[Path, Path]:
+    """Create result and figure directories for a model branch."""
+
+    branch_results_dir = results_root / branch_name
+    branch_figures_dir = figures_root / branch_name
+    branch_results_dir.mkdir(parents=True, exist_ok=True)
+    branch_figures_dir.mkdir(parents=True, exist_ok=True)
+    return branch_results_dir, branch_figures_dir
+
+
+def _write_alignment_outputs(
+    evaluation_result: EvaluationResult,
+    output_dir: Path,
+) -> None:
+    """Persist cluster-to-phase alignment tables and mapping artifacts."""
+
+    evaluation_result.counts_table.to_csv(output_dir / "cluster_phase_counts.csv")
+    evaluation_result.normalized_table.to_csv(output_dir / "cluster_phase_normalized.csv")
+
+    with (output_dir / "mapped_classification_report.txt").open("w", encoding="utf-8") as file:
+        file.write(evaluation_result.mapped_report)
+
+    with (output_dir / "cluster_to_phase_mapping.json").open("w", encoding="utf-8") as file:
+        json.dump(evaluation_result.cluster_to_phase_map, file, indent=2)
+
+
+def _run_gmm_branch(
+    cfg: PipelineConfig,
+    raw_df: pd.DataFrame,
+    pca_result: PCAResult,
+    preprocessing_result: PreprocessingResult,
+    results_root: Path,
+    figures_root: Path,
+) -> dict[str, object]:
+    """Run model selection, final fitting, evaluation, and saving for GMM."""
+
+    gmm_results_dir, gmm_figures_dir = _make_branch_dirs(results_root, figures_root, "gmm")
+
+    selection_result = evaluate_gmm_candidates(
+        feature_matrix=pca_result.transformed,
+        k_min=cfg.gmm_k_min,
+        k_max=cfg.gmm_k_max,
+        random_state=cfg.random_state,
+        n_init=cfg.gmm_n_init,
+        covariance_type=cfg.gmm_covariance_type,
+    )
+
+    _, labels = fit_final_gmm(
+        feature_matrix=pca_result.transformed,
+        n_components=selection_result.optimal_k,
+        random_state=cfg.random_state,
+        n_init=cfg.gmm_n_init,
+        covariance_type=cfg.gmm_covariance_type,
+    )
+
+    enriched_df = raw_df.copy()
+    enriched_df[cfg.gmm_cluster_column] = labels
+
+    evaluation_result = evaluate_phase_alignment(
+        df=enriched_df,
+        cluster_column=cfg.gmm_cluster_column,
+        phase_column=cfg.phase_column,
+    )
+
+    selection_result.scores.to_csv(gmm_results_dir / "gmm_aic_bic_scores.csv", index=False)
+    enriched_df.to_csv(cfg.gmm_enriched_data_path, index=False)
+    _write_alignment_outputs(evaluation_result, gmm_results_dir)
+
+    plot_aic_bic(
+        scores=selection_result.scores,
+        output_path=gmm_figures_dir / "gmm_aic_bic_by_k.png",
+    )
+    plot_cluster_phase_heatmap(
+        normalized_table=evaluation_result.normalized_table,
+        output_path=gmm_figures_dir / "cluster_phase_heatmap.png",
+        title="GMM cluster to Phase alignment",
+    )
+
+    selected_row = selection_result.scores[
+        selection_result.scores["k"] == selection_result.optimal_k
+    ].iloc[0]
+
+    summary: dict[str, object] = {
+        "model": "gmm",
+        "selected_k": int(selection_result.optimal_k),
+        "selection_criterion": "lowest_bic",
+        "selected_k_aic": float(selected_row["aic"]),
+        "selected_k_bic": float(selected_row["bic"]),
+        "nmi": float(evaluation_result.nmi),
+        "selected_pca_components": int(pca_result.selected_components),
+        "pca_variance_threshold": float(cfg.pca_variance_threshold),
+        "imputation_method": preprocessing_result.imputation_method,
+        "global_missingness_ratio": float(preprocessing_result.global_missingness_ratio),
+        "n_samples": int(len(enriched_df)),
+        "n_physiological_features": int(len(preprocessing_result.feature_columns)),
+        "aic_bic_by_k": selection_result.scores[["k", "aic", "bic"]].to_dict(orient="records"),
+    }
+
+    with (gmm_results_dir / "metrics_summary.json").open("w", encoding="utf-8") as file:
+        json.dump(summary, file, indent=2)
+
+    return summary
+
+
+def _run_kmeans_branch(
+    cfg: PipelineConfig,
+    raw_df: pd.DataFrame,
+    pca_result: PCAResult,
+    preprocessing_result: PreprocessingResult,
+    results_root: Path,
+    figures_root: Path,
+) -> dict[str, object]:
+    """Run model selection, final fitting, evaluation, and saving for K-means."""
+
+    kmeans_results_dir, kmeans_figures_dir = _make_branch_dirs(results_root, figures_root, "kmeans")
+
+    selection_result: ModelSelectionResult = evaluate_kmeans_candidates(
+        feature_matrix=pca_result.transformed,
+        k_min=cfg.kmeans_k_min,
+        k_max=cfg.kmeans_k_max,
+        random_state=cfg.random_state,
+        n_init=cfg.kmeans_n_init,
+    )
+    selected_k = int(cfg.kmeans_final_k or selection_result.optimal_k)
+
+    _, labels = fit_final_kmeans(
+        feature_matrix=pca_result.transformed,
+        n_clusters=selected_k,
+        random_state=cfg.random_state,
+        n_init=cfg.kmeans_n_init,
+    )
+
+    enriched_df = raw_df.copy()
+    enriched_df[cfg.kmeans_cluster_column] = labels
+
+    evaluation_result = evaluate_phase_alignment(
+        df=enriched_df,
+        cluster_column=cfg.kmeans_cluster_column,
+        phase_column=cfg.phase_column,
+    )
+
+    selection_result.scores.to_csv(
+        kmeans_results_dir / "kmeans_model_selection_scores.csv",
+        index=False,
+    )
+    enriched_df.to_csv(cfg.kmeans_enriched_data_path, index=False)
+    _write_alignment_outputs(evaluation_result, kmeans_results_dir)
+
+    plot_kmeans_elbow(
+        scores=selection_result.scores,
+        output_path=kmeans_figures_dir / "kmeans_elbow_inertia_by_k.png",
+    )
+    plot_kmeans_silhouette(
+        scores=selection_result.scores,
+        output_path=kmeans_figures_dir / "kmeans_silhouette_by_k.png",
+    )
+    plot_cluster_phase_heatmap(
+        normalized_table=evaluation_result.normalized_table,
+        output_path=kmeans_figures_dir / "cluster_phase_heatmap.png",
+        title="K-means cluster to Phase alignment",
+    )
+
+    selected_row = selection_result.scores[selection_result.scores["k"] == selected_k]
+    selected_silhouette = None
+    selected_inertia = None
+    if not selected_row.empty:
+        selected_silhouette = float(selected_row.iloc[0]["silhouette"])
+        selected_inertia = float(selected_row.iloc[0]["inertia"])
+
+    summary: dict[str, object] = {
+        "model": "kmeans",
+        "selected_k": selected_k,
+        "selection_criterion": "highest_silhouette" if cfg.kmeans_final_k is None else "manual_k",
+        "selected_k_silhouette": selected_silhouette,
+        "selected_k_inertia": selected_inertia,
+        "nmi": float(evaluation_result.nmi),
+        "selected_pca_components": int(pca_result.selected_components),
+        "pca_variance_threshold": float(cfg.pca_variance_threshold),
+        "imputation_method": preprocessing_result.imputation_method,
+        "global_missingness_ratio": float(preprocessing_result.global_missingness_ratio),
+        "n_samples": int(len(enriched_df)),
+        "n_physiological_features": int(len(preprocessing_result.feature_columns)),
+        "kmeans_scores_by_k": selection_result.scores[["k", "inertia", "silhouette"]].to_dict(
+            orient="records"
+        ),
+    }
+
+    with (kmeans_results_dir / "metrics_summary.json").open("w", encoding="utf-8") as file:
+        json.dump(summary, file, indent=2)
+
+    return summary
 
 
 def run_pipeline(config: PipelineConfig | None = None) -> dict[str, object]:
@@ -41,83 +243,49 @@ def run_pipeline(config: PipelineConfig | None = None) -> dict[str, object]:
         random_state=cfg.random_state,
     )
 
-    selection_result = evaluate_gmm_candidates(
-        feature_matrix=pca_result.transformed,
-        k_min=cfg.gmm_k_min,
-        k_max=cfg.gmm_k_max,
-        random_state=cfg.random_state,
-        n_init=cfg.gmm_n_init,
-        covariance_type=cfg.gmm_covariance_type,
-    )
-
-    _, labels = fit_final_gmm(
-        feature_matrix=pca_result.transformed,
-        n_components=selection_result.optimal_k,
-        random_state=cfg.random_state,
-        n_init=cfg.gmm_n_init,
-        covariance_type=cfg.gmm_covariance_type,
-    )
-
-    enriched_df = raw_df.copy()
-    enriched_df[cfg.cluster_column] = labels
-
-    evaluation_result = evaluate_phase_alignment(
-        df=enriched_df,
-        cluster_column=cfg.cluster_column,
-        phase_column=cfg.phase_column,
-    )
-
     preprocessing_result.missingness_report.to_csv(
         results_dir / "missingness_report.csv",
         index=False,
     )
     pca_result.variance_table.to_csv(results_dir / "pca_variance_table.csv", index=False)
-    selection_result.scores.to_csv(results_dir / "gmm_aic_bic_scores.csv", index=False)
-    evaluation_result.counts_table.to_csv(results_dir / "cluster_phase_counts.csv")
-    evaluation_result.normalized_table.to_csv(results_dir / "cluster_phase_normalized.csv")
-    enriched_df.to_csv(cfg.enriched_data_path, index=False)
 
     plot_cumulative_variance(
         variance_table=pca_result.variance_table,
         variance_threshold=cfg.pca_variance_threshold,
         output_path=figures_dir / "pca_cumulative_explained_variance.png",
     )
-    plot_aic_bic(
-        scores=selection_result.scores,
-        output_path=figures_dir / "gmm_aic_bic_by_k.png",
-    )
-    plot_cluster_phase_heatmap(
-        normalized_table=evaluation_result.normalized_table,
-        output_path=figures_dir / "cluster_phase_heatmap.png",
-    )
-
-    selected_row = selection_result.scores[
-        selection_result.scores["k"] == selection_result.optimal_k
-    ].iloc[0]
 
     summary: dict[str, object] = {
-        "selected_k": int(selection_result.optimal_k),
-        "selected_k_aic": float(selected_row["aic"]),
-        "selected_k_bic": float(selected_row["bic"]),
-        "nmi": float(evaluation_result.nmi),
         "selected_pca_components": int(pca_result.selected_components),
         "pca_variance_threshold": float(cfg.pca_variance_threshold),
         "imputation_method": preprocessing_result.imputation_method,
         "global_missingness_ratio": float(preprocessing_result.global_missingness_ratio),
-        "n_samples": int(len(enriched_df)),
+        "n_samples": int(len(raw_df)),
         "n_physiological_features": int(len(preprocessing_result.feature_columns)),
-        "aic_bic_by_k": selection_result.scores[["k", "aic", "bic"]].to_dict(
-            orient="records"
-        ),
+        "models": {},
     }
+
+    if cfg.run_gmm:
+        summary["models"]["gmm"] = _run_gmm_branch(
+            cfg=cfg,
+            raw_df=raw_df,
+            pca_result=pca_result,
+            preprocessing_result=preprocessing_result,
+            results_root=results_dir,
+            figures_root=figures_dir,
+        )
+
+    if cfg.run_kmeans:
+        summary["models"]["kmeans"] = _run_kmeans_branch(
+            cfg=cfg,
+            raw_df=raw_df,
+            pca_result=pca_result,
+            preprocessing_result=preprocessing_result,
+            results_root=results_dir,
+            figures_root=figures_dir,
+        )
 
     with (results_dir / "metrics_summary.json").open("w", encoding="utf-8") as file:
         json.dump(summary, file, indent=2)
-
-    with (results_dir / "mapped_classification_report.txt").open("w", encoding="utf-8") as file:
-        file.write(evaluation_result.mapped_report)
-
-    with (results_dir / "cluster_to_phase_mapping.json").open("w", encoding="utf-8") as file:
-        json.dump(evaluation_result.cluster_to_phase_map, file, indent=2)
 
     return summary
