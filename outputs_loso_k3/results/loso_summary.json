@@ -1,0 +1,19 @@
+{
+  "n_folds": 26,
+  "cv_scheme": "LeaveOneGroupOut",
+  "group_column": "Individual",
+  "phase_column": "Phase",
+  "fixed_k": 3,
+  "automatic_k_selection": false,
+  "pca_variance_threshold": 0.8,
+  "gmm_covariance_type": "diag",
+  "mean_test_nmi": 0.20927455897063016,
+  "std_test_nmi": 0.11526344005106016,
+  "mean_test_ari": -0.002037928230832813,
+  "std_test_ari": 0.11297103820175854,
+  "mean_selected_k": 3.0,
+  "selected_k_counts": {
+    "3": 26
+  },
+  "mean_selected_pca_components": 14.0
+}
