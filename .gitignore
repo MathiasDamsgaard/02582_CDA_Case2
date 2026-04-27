@@ -1,6 +1,8 @@
 # Project data folders
 *data*/
 *HR_data_2*/
+*.csv
+*.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
