@@ -14,7 +14,6 @@ class PipelineConfig:
     pca_variance_threshold: float = 0.90
 
     # Shared project/data settings
-    missingness_iterative_threshold: float = 0.20
     group_column: str = "Individual"
     phase_column: str = "Phase"
     required_columns: tuple[str, ...] = ("Individual", "Phase", "Round")

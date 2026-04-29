@@ -229,8 +229,6 @@ def run_pipeline(config: PipelineConfig | None = None) -> dict[str, object]:
         df=raw_df,
         prefixes=cfg.physiological_prefixes,
         group_column=cfg.group_column,
-        missingness_iterative_threshold=cfg.missingness_iterative_threshold,
-        random_state=cfg.random_state,
     )
 
     feature_matrix = preprocessing_result.processed_df[
