@@ -16,7 +16,6 @@ class PipelineConfig:
     gmm_k_max: int = 8
     gmm_n_init: int = 10
     gmm_covariance_type: str = "full"
-    missingness_iterative_threshold: float = 0.20
     group_column: str = "Individual"
     phase_column: str = "Phase"
     cluster_column: str = "Cluster"

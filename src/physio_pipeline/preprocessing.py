@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
-from sklearn.experimental import enable_iterative_imputer  # noqa: F401
-from sklearn.impute import IterativeImputer, SimpleImputer
+from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
 
@@ -51,14 +50,21 @@ def compute_missingness_report(df: pd.DataFrame, feature_columns: list[str]) -> 
         .sort_values("missing_fraction", ascending=False)
         .reset_index(drop=True)
     )
+    # Add a total missing count and fraction as a total feature row
+    total_missing_count = report["missing_count"].sum()
+    total_count = len(df) * len(feature_columns)
+    total_missing_fraction = total_missing_count / total_count
+    report.loc[len(report)] = {
+        "feature": "TOTAL",
+        "missing_fraction": total_missing_fraction,
+        "missing_count": total_missing_count,
+    }
     return report
 
 
 def impute_missing_values(
     df: pd.DataFrame,
     feature_columns: list[str],
-    missingness_iterative_threshold: float,
-    random_state: int,
 ) -> tuple[pd.DataFrame, str, float, pd.DataFrame]:
     """
     Impute missing values with median by default.
@@ -69,13 +75,8 @@ def impute_missing_values(
 
     report = compute_missingness_report(df, feature_columns)
     global_missingness_ratio = float(df[feature_columns].isna().mean().mean())
-
-    if global_missingness_ratio > missingness_iterative_threshold:
-        imputer = IterativeImputer(random_state=random_state)
-        method = "iterative"
-    else:
-        imputer = SimpleImputer(strategy="median")
-        method = "median"
+    method = "median"
+    imputer = SimpleImputer(strategy=method)
 
     imputed_values = imputer.fit_transform(df[feature_columns])
     float_feature_dtypes = {column: float for column in feature_columns}
@@ -115,8 +116,6 @@ def preprocess_dataset(
     df: pd.DataFrame,
     prefixes: tuple[str, ...],
     group_column: str,
-    missingness_iterative_threshold: float,
-    random_state: int,
 ) -> PreprocessingResult:
     """Run feature selection, imputation, and within-individual scaling."""
 
@@ -124,8 +123,6 @@ def preprocess_dataset(
     imputed_df, method, global_missingness_ratio, missingness_report = impute_missing_values(
         df=df,
         feature_columns=feature_columns,
-        missingness_iterative_threshold=missingness_iterative_threshold,
-        random_state=random_state,
     )
     processed_df = scale_within_group(
         df=imputed_df,
