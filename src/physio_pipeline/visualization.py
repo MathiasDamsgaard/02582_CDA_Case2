@@ -91,6 +91,31 @@ def plot_kmeans_silhouette(
     plt.close(fig)
 
 
+def plot_gap_statistic(
+    gap_df: pd.DataFrame,
+    output_path: Path,
+) -> None:
+    """Plot the Gap Statistic against candidate cluster counts."""
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(gap_df["k"], gap_df["gap"], marker="o", linewidth=2)
+    # ax.errorbar(
+    #     gap_df["k"],
+    #     gap_df["gap"],
+    #     yerr=gap_df["s_k"],
+    #     marker="o",
+    #     linewidth=2,
+    #     capsize=5,
+    # )
+    ax.set_xlabel("Number of clusters (k)")
+    ax.set_ylabel("Gap Statistic")
+    ax.set_title("K-Means Model Selection using Gap Statistic")
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_cluster_phase_heatmap(
     normalized_table: pd.DataFrame,
     output_path: Path,
