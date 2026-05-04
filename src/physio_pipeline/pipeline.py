@@ -9,13 +9,20 @@ from .clustering import fit_final_gmm, fit_final_kmeans
 from .config import PipelineConfig
 from .data_io import ensure_output_directories, load_dataset
 from .evaluation import EvaluationResult, evaluate_phase_alignment
-from .model_selection import ModelSelectionResult, evaluate_gmm_candidates, evaluate_kmeans_candidates
+from .model_selection import (
+    ModelSelectionResult,
+    evaluate_gmm_candidates,
+    evaluate_kmeans_candidates,
+    evaluate_kmeans_gap_statistic,
+    select_optimal_k_gap,
+)
 from .pca_stage import PCAResult, run_pca
 from .preprocessing import PreprocessingResult, preprocess_dataset
 from .visualization import (
     plot_aic_bic,
     plot_cluster_phase_heatmap,
     plot_cumulative_variance,
+    plot_gap_statistic,
     plot_kmeans_elbow,
     plot_kmeans_silhouette,
 )
@@ -144,7 +151,18 @@ def _run_kmeans_branch(
         random_state=cfg.random_state,
         n_init=cfg.kmeans_n_init,
     )
-    selected_k = int(cfg.kmeans_final_k or selection_result.optimal_k)
+    
+    gap_df = evaluate_kmeans_gap_statistic(
+        feature_matrix=pca_result.transformed,
+        k_min=cfg.kmeans_k_min,
+        k_max=cfg.kmeans_k_max,
+        random_state=cfg.random_state,
+        n_init=cfg.kmeans_n_init,
+        n_reference_datasets=10,
+    )
+    gap_optimal_k = select_optimal_k_gap(gap_df)
+    
+    selected_k = int(cfg.kmeans_final_k or gap_optimal_k)
 
     _, labels = fit_final_kmeans(
         feature_matrix=pca_result.transformed,
@@ -166,6 +184,10 @@ def _run_kmeans_branch(
         kmeans_results_dir / "kmeans_model_selection_scores.csv",
         index=False,
     )
+    gap_df.to_csv(
+        kmeans_results_dir / "kmeans_gap_scores.csv",
+        index=False,
+    )
     enriched_df.to_csv(cfg.kmeans_enriched_data_path, index=False)
     _write_alignment_outputs(evaluation_result, kmeans_results_dir)
 
@@ -176,6 +198,10 @@ def _run_kmeans_branch(
     plot_kmeans_silhouette(
         scores=selection_result.scores,
         output_path=kmeans_figures_dir / "kmeans_silhouette_by_k.png",
+    )
+    plot_gap_statistic(
+        gap_df=gap_df,
+        output_path=kmeans_figures_dir / "kmeans_gap_statistic_by_k.png",
     )
     plot_cluster_phase_heatmap(
         normalized_table=evaluation_result.normalized_table,
@@ -190,12 +216,18 @@ def _run_kmeans_branch(
         selected_silhouette = float(selected_row.iloc[0]["silhouette"])
         selected_inertia = float(selected_row.iloc[0]["inertia"])
 
+    selected_gap_row = gap_df[gap_df["k"] == selected_k]
+    selected_gap = None
+    if not selected_gap_row.empty:
+        selected_gap = float(selected_gap_row.iloc[0]["gap"])
+
     summary: dict[str, object] = {
         "model": "kmeans",
         "selected_k": selected_k,
-        "selection_criterion": "highest_silhouette" if cfg.kmeans_final_k is None else "manual_k",
+        "selection_criterion": "gap_statistic" if cfg.kmeans_final_k is None else "manual_k",
         "selected_k_silhouette": selected_silhouette,
         "selected_k_inertia": selected_inertia,
+        "selected_k_gap": selected_gap,
         "nmi": float(evaluation_result.nmi),
         "selected_pca_components": int(pca_result.selected_components),
         "pca_variance_threshold": float(cfg.pca_variance_threshold),
@@ -206,6 +238,7 @@ def _run_kmeans_branch(
         "kmeans_scores_by_k": selection_result.scores[["k", "inertia", "silhouette"]].to_dict(
             orient="records"
         ),
+        "kmeans_gap_scores_by_k": gap_df.to_dict(orient="records"),
     }
 
     with (kmeans_results_dir / "metrics_summary.json").open("w", encoding="utf-8") as file:

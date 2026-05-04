@@ -11,7 +11,7 @@ class PipelineConfig:
     data_path: Path = Path("HR_data_2") / "HR_data_2.csv"
     output_dir: Path = Path("outputs")
     random_state: int = 42
-    pca_variance_threshold: float = 0.90
+    pca_variance_threshold: float = 0.80
 
     # Shared project/data settings
     group_column: str = "Individual"
@@ -21,10 +21,10 @@ class PipelineConfig:
 
     # GMM settings
     run_gmm: bool = True
-    gmm_k_min: int = 1
+    gmm_k_min: int = 2
     gmm_k_max: int = 8
     gmm_n_init: int = 10
-    gmm_covariance_type: str = "full"
+    gmm_covariance_type: str = "diag"
     gmm_cluster_column: str = "GMMCluster"
 
     # K-means settings

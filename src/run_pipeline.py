@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pca-variance-threshold",
         type=float,
-        default=0.90,
+        default=0.80,
         help="Cumulative explained variance target for PCA",
     )
     parser.add_argument(
@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
         "--k-min",
         dest="gmm_k_min",
         type=int,
-        default=1,
+        default=2,
         help="Minimum number of GMM components",
     )
     parser.add_argument(
@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gmm-covariance-type",
         type=str,
-        default="full",
+        default="diag",
         help="Covariance type for GMM - set to full or diag",
     )
     parser.add_argument(
@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         "--kmeans-final-k",
         type=int,
         default=None,
-        help="Optional fixed K-means k. If omitted, the best silhouette score is used.",
+        help="Optional fixed K-means k. If omitted, the gap statistic is used.",
     )
     parser.add_argument(
         "--skip-gmm",
@@ -125,6 +125,8 @@ def main() -> None:
         print(f"Selected K-means k: {kmeans_summary['selected_k']}")
         if kmeans_summary["selected_k_silhouette"] is not None:
             print(f"Selected K-means silhouette: {kmeans_summary['selected_k_silhouette']:.4f}")
+        if kmeans_summary.get("selected_k_gap") is not None:
+            print(f"Selected K-means gap statistic: {kmeans_summary['selected_k_gap']:.4f}")
         print(f"K-means NMI (Phase vs Cluster): {kmeans_summary['nmi']:.4f}")
 
 
